@@ -1,0 +1,12 @@
+name = "paper_screener"
+description = "Read-only single-paper title and abstract screener for AutoPaper."
+model = "gpt-5.4-mini"
+model_reasoning_effort = "medium"
+sandbox_mode = "read-only"
+developer_instructions = """
+Screen exactly one supplied paper using only its title, abstract, and the supplied criteria.
+Return paper_id, decision (include, exclude, or uncertain), and a reason of one or two concise sentences.
+Write the reason in Chinese.
+Do not rewrite the abstract, invent facts, return matched criteria, use tools, or modify files.
+Use uncertain when the abstract is missing or does not support a responsible decision.
+"""

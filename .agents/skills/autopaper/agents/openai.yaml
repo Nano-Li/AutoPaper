@@ -1,0 +1,4 @@
+interface:
+  display_name: "AutoPaper"
+  short_description: "检索、筛选、复核并下载论文"
+  default_prompt: "Use $autopaper to continue the local literature workflow and show me the current review status before downloading."

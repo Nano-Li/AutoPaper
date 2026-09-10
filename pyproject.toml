@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autopaper"
+version = "0.1.0"
+description = "A small, auditable academic-paper search pipeline."
+requires-python = ">=3.11"
+dependencies = [
+    "curl-cffi==0.15.0",
+    "playwright>=1.40,<2",
+]
+
+[project.scripts]
+autopaper = "autopaper.cli:main"
+autopaper-workflow = "autopaper.workflow:main"
+
+[tool.setuptools.packages.find]
+include = ["autopaper*"]

@@ -1,0 +1,65 @@
+[openalex]
+# Create a free key at https://openalex.org/settings/api
+api_key = "replace-me"
+base_url = "https://api.openalex.org"
+
+# "direct" ignores system/environment proxies. Use "proxy" only when needed.
+network_route = "direct"
+proxy_url = "http://127.0.0.1:7890"
+
+# Conservative defaults: one request at a time, at least 1.1 seconds apart.
+timeout_seconds = 30
+min_interval_seconds = 1.1
+max_retries = 2
+per_page = 100
+# Basic page pagination supports at most 10,000 results (100 pages x 100).
+max_pages = 100
+
+[search]
+query = "Nanoparticle"
+from_year = 2025
+to_year = 2025
+types = ["article"]
+require_abstract = false
+exclude_retracted = true
+output_dir = "runs"
+
+[[search.journals]]
+name = "Physical Review Letters"
+issn = "0031-9007"
+
+[download]
+# The downloader always ignores system/environment proxies in "direct" mode.
+network_route = "direct"
+proxy_url = "http://127.0.0.1:7890"
+output_dir = "paper_inbox/pdf"
+manifest_file = "paper_inbox/download_manifest.jsonl"
+failures_file = "paper_inbox/download_failures.csv"
+manual_file = "paper_inbox/manual_download.html"
+timeout_seconds = 90
+min_interval_seconds = 3.0
+max_retries = 1
+min_pdf_bytes = 10000
+supplementary = false
+
+[screening]
+# One paper is assigned to one subagent. Three subagents run in each wave.
+model = "gpt-5.4-mini"
+reasoning_effort = "medium"
+max_parallel_agents = 3
+criteria = """
+Describe which research questions, materials, methods, or applications are relevant.
+Describe any explicit exclusions here.
+"""
+decision_prompt = """
+Read only the supplied title and abstract. Return include, exclude, or uncertain,
+plus one or two concise Chinese sentences explaining the decision. Do not invent facts.
+"""
+
+[workflow]
+database = "workspace/state.sqlite3"
+review_file = "workspace/review.md"
+review_archive_dir = "workspace/reviews"
+status_file = "workspace/STATUS.md"
+download_queue_file = "workspace/download_queue.jsonl"
+review_include_excluded = false

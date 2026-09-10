@@ -1,0 +1,58 @@
+# Python environments, caches, builds, and test output
+.venv/
+venv/
+tests/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Local credentials and machine-specific configuration
+config/config.local.toml
+config/*.local.toml
+.env
+.env.*
+!.env.example
+
+# Search results, state databases, reports, and browser sessions
+runs/
+workspace/
+browser_profiles/
+test_artifacts/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
+# Downloaded papers, supplementary files, and external reference checkouts
+paper_inbox/
+_references/
+*.pdf
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+*.zip
+*.rar
+*.7z
+
+# Local project notes that are not part of the distributable Skill
+AutoPaper_需求调研与建议方案.md
+
+# Logs, temporary files, and OS/editor metadata
+*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+Desktop.ini
