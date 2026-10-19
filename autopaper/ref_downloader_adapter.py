@@ -14,6 +14,10 @@ from .download import DownloadError, load_queue
 PUBLISHER_BY_DOI_PREFIX = {
     "10.1103/": "aps",
     "10.1016/": "elsevier",
+    "10.1021/": "acs",
+    "10.1002/": "wiley",
+    "10.1038/": "nature",
+    "10.1364/": "osa",
 }
 
 

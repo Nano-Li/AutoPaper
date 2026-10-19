@@ -33,6 +33,11 @@ DOWNLOAD_STATUSES = {
     "manual_pending",
 }
 MARKDOWN_STATUSES = {"not_ready", "pending", "processing", "done", "failed"}
+MISSING_ABSTRACT_REASON = (
+    "OpenAlex 检索结果未提供摘要，无法进行可靠的内容筛选，"
+    "已自动标记为 uncertain。"
+)
+MISSING_ABSTRACT_MODEL = "rule:missing-abstract"
 
 
 @dataclass(frozen=True)
@@ -47,7 +52,8 @@ class WorkflowSettings:
     reasoning_effort: str
     max_parallel_agents: int
     supplementary: bool
-    review_include_excluded: bool = False
+    papers_per_agent: int = 1
+    review_include_excluded: bool = True
     review_source_run: Path | None = None
     review_archive_dir: Path = Path("workspace/reviews")
 
@@ -69,6 +75,7 @@ class ImportSummary:
     reused_screening: int
     pending_screening: int
     reset_for_rescreening: int
+    automatic_uncertain: int
 
 
 def _utc_now() -> str:
@@ -110,6 +117,9 @@ def load_workflow_settings(path: str | Path) -> WorkflowSettings:
     max_parallel = int(screening.get("max_parallel_agents", 3))
     if not 1 <= max_parallel <= 3:
         raise ValueError("[screening] max_parallel_agents must be between 1 and 3")
+    papers_per_agent = int(screening.get("papers_per_agent", 1))
+    if not 1 <= papers_per_agent <= 3:
+        raise ValueError("[screening] papers_per_agent must be between 1 and 3")
     model = str(screening.get("model", "gpt-5.6-luna")).strip()
     effort = str(screening.get("reasoning_effort", "low")).strip().lower()
     if effort not in {"low", "medium", "high", "xhigh", "max"}:
@@ -126,9 +136,10 @@ def load_workflow_settings(path: str | Path) -> WorkflowSettings:
         model=model,
         reasoning_effort=effort,
         max_parallel_agents=max_parallel,
+        papers_per_agent=papers_per_agent,
         supplementary=bool(download.get("supplementary", False)),
         review_include_excluded=bool(
-            workflow.get("review_include_excluded", False)
+            workflow.get("review_include_excluded", True)
         ),
         review_source_run=(
             Path(str(workflow["review_source_run"])).resolve()
@@ -350,6 +361,65 @@ def active_source_run(connection: sqlite3.Connection) -> str | None:
     return _get_meta(connection, "active_source_run")
 
 
+def _mark_missing_abstracts_uncertain(
+    connection: sqlite3.Connection, source_run: str | Path | None = None
+) -> int:
+    """Resolve pending papers without abstracts without spending Sub Agent work."""
+    query = """
+        SELECT id FROM papers
+        WHERE screening_status = 'pending'
+          AND TRIM(COALESCE(abstract, '')) = ''
+    """
+    params: tuple[Any, ...] = ()
+    if source_run is not None:
+        query += " AND source_run = ?"
+        params = (str(Path(source_run).resolve()),)
+    rows = connection.execute(query, params).fetchall()
+    if not rows:
+        return 0
+
+    profiles = connection.execute(
+        "SELECT id FROM screening_profiles ORDER BY id"
+    ).fetchall()
+    if len(profiles) != 1:
+        raise ValueError(
+            "Exactly one screening profile is required before importing "
+            "papers without abstracts"
+        )
+    profile_id = int(profiles[0]["id"])
+    now = _utc_now()
+    with connection:
+        connection.executemany(
+            """
+            INSERT INTO screening_results (
+                paper_id, profile_id, decision, reason, model, screened_at
+            ) VALUES (?, ?, 'uncertain', ?, ?, ?)
+            """,
+            [
+                (row["id"], profile_id, MISSING_ABSTRACT_REASON,
+                 MISSING_ABSTRACT_MODEL, now)
+                for row in rows
+            ],
+        )
+        connection.executemany(
+            """
+            UPDATE papers
+            SET screening_status = 'uncertain', screening_reason = ?,
+                screening_model = ?, screening_profile_id = ?,
+                screening_reused = 0, screened_at = ?,
+                human_status = 'pending', human_decided_at = NULL,
+                updated_at = ?
+            WHERE id = ? AND screening_status = 'pending'
+            """,
+            [
+                (MISSING_ABSTRACT_REASON, MISSING_ABSTRACT_MODEL, profile_id,
+                 now, now, row["id"])
+                for row in rows
+            ],
+        )
+    return len(rows)
+
+
 def _iter_candidates(path: Path) -> Iterable[tuple[int, dict[str, Any]]]:
     if path.suffix.casefold() == ".csv":
         with path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -476,6 +546,9 @@ def import_candidates(
                     values,
                 )
         _set_meta(connection, "active_source_run", resolved_path)
+    automatic_uncertain = _mark_missing_abstracts_uncertain(
+        connection, resolved_path
+    )
     pending_screening = connection.execute(
         """
         SELECT COUNT(*) FROM papers
@@ -490,6 +563,7 @@ def import_candidates(
         reused_screening=reused_screening,
         pending_screening=pending_screening,
         reset_for_rescreening=reset_for_rescreening,
+        automatic_uncertain=automatic_uncertain,
     )
 
 
@@ -508,12 +582,14 @@ def _resolve_paper(connection: sqlite3.Connection, code: str) -> sqlite3.Row:
 def pending_screening_tasks(
     connection: sqlite3.Connection, settings: WorkflowSettings, limit: int | None = None
 ) -> list[dict[str, Any]]:
-    requested = settings.max_parallel_agents if limit is None else limit
-    if not 1 <= requested <= settings.max_parallel_agents:
+    capacity = settings.max_parallel_agents * settings.papers_per_agent
+    requested = capacity if limit is None else limit
+    if not 1 <= requested <= capacity:
         raise ValueError(
-            f"limit must be between 1 and configured max {settings.max_parallel_agents}"
+            f"limit must be between 1 and configured max {capacity}"
         )
     source_run = active_source_run(connection)
+    _mark_missing_abstracts_uncertain(connection, source_run)
     if source_run is None:
         rows = connection.execute(
             """
@@ -551,6 +627,36 @@ def pending_screening_tasks(
         }
         for row in rows
     ]
+
+
+def pending_screening_batches(
+    connection: sqlite3.Connection, settings: WorkflowSettings, limit: int | None = None
+) -> list[dict[str, Any]]:
+    """Return one self-contained payload per agent, sharing criteria within a batch."""
+    agents = settings.max_parallel_agents if limit is None else limit
+    if not 1 <= agents <= settings.max_parallel_agents:
+        raise ValueError("Batch limit exceeds configured max_parallel_agents")
+    tasks = pending_screening_tasks(
+        connection, settings, agents * settings.papers_per_agent
+    )
+    batches = []
+    for start in range(0, len(tasks), settings.papers_per_agent):
+        group = tasks[start:start + settings.papers_per_agent]
+        batches.append({
+            "criteria": settings.criteria,
+            "instructions": settings.decision_prompt,
+            "batch_instructions": (
+                "Judge each paper independently. Return a JSON array containing "
+                "exactly one paper_id, decision, and Chinese reason object per "
+                "supplied paper, preserving input order. Do not mix evidence "
+                "between papers."
+            ),
+            "papers": [
+                {key: task[key] for key in ("paper_id", "title", "abstract")}
+                for task in group
+            ],
+        })
+    return batches
 
 
 def record_screening(
@@ -673,7 +779,7 @@ def _counts(
 def render_review(
     connection: sqlite3.Connection,
     output_path: str | Path,
-    include_excluded: bool = False,
+    include_excluded: bool = True,
     source_run: str | Path | None = None,
 ) -> Path:
     output = Path(output_path)
@@ -765,7 +871,7 @@ def render_review(
 
 def _status_rows(connection: sqlite3.Connection, where: str) -> list[sqlite3.Row]:
     return connection.execute(
-        f"SELECT id, title, download_status, markdown_status FROM papers WHERE {where} ORDER BY id"
+        f"SELECT id, title, download_status, markdown_status, markdown_path FROM papers WHERE {where} ORDER BY id"
     ).fetchall()
 
 
@@ -817,14 +923,19 @@ def render_status(connection: sqlite3.Connection, output_path: str | Path) -> Pa
             "download_status = 'downloaded' AND markdown_status = 'pending'",
             "markdown_status",
         ),
+        ("Markdown 已完成", "markdown_status = 'done'", "markdown_status"),
+        ("Markdown 待续跑或重试", "markdown_status IN ('processing', 'failed')", "markdown_status"),
     ]
     for heading, where, status_column in sections:
         lines.extend(["", f"## {heading}", ""])
         rows = _status_rows(connection, where)
         if rows:
-            lines.extend(
-                f"- {paper_code(row)}｜{row['title']}｜{row[status_column]}" for row in rows
-            )
+            for row in rows:
+                line = f"- {paper_code(row)}｜{row['title']}｜{row[status_column]}"
+                if heading == "Markdown 已完成" and row["markdown_path"]:
+                    link = Path(row["markdown_path"]).resolve().as_posix()
+                    line += f"｜[打开 Markdown](<{link}>)"
+                lines.append(line)
         else:
             lines.append("（无）")
     output.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
@@ -1002,6 +1113,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pending_parser = subparsers.add_parser("pending")
     pending_parser.add_argument("--limit", type=int)
+    batches_parser = subparsers.add_parser("pending-batches")
+    batches_parser.add_argument("--limit", type=int, help="Maximum number of agents")
     screening_parser = subparsers.add_parser("record-screening")
     screening_parser.add_argument("--paper-id", required=True)
     screening_parser.add_argument("--decision", required=True)
@@ -1039,6 +1152,7 @@ def main(argv: list[str] | None = None) -> int:
                 "init",
                 "import",
                 "pending",
+                "pending-batches",
                 "record-screening",
                 "screening-profile",
                 "finalize-screening",
@@ -1056,6 +1170,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"New database records: {summary.inserted}")
                 print(f"Existing database records: {summary.matched_existing}")
                 print(f"Reused screening results: {summary.reused_screening}")
+                print(
+                    "Missing abstract -> uncertain: "
+                    f"{summary.automatic_uncertain}"
+                )
                 print(f"Require Sub Agents: {summary.pending_screening}")
                 if summary.reset_for_rescreening:
                     print(
@@ -1067,6 +1185,9 @@ def main(argv: list[str] | None = None) -> int:
                 tasks = pending_screening_tasks(connection, settings, args.limit)
                 for task in tasks:
                     print(json.dumps(task, ensure_ascii=False))
+            elif args.command == "pending-batches":
+                for batch in pending_screening_batches(connection, settings, args.limit):
+                    print(json.dumps(batch, ensure_ascii=False))
             elif args.command == "record-screening":
                 record_screening(
                     connection,

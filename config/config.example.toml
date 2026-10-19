@@ -43,10 +43,11 @@ min_pdf_bytes = 10000
 supplementary = false
 
 [screening]
-# One paper is assigned to one subagent. Three subagents run in each wave.
-model = "gpt-5.4-mini"
-reasoning_effort = "medium"
+# Each subagent screens up to three papers; at most three agents run per wave.
+model = "gpt-5.6-luna"
+reasoning_effort = "low"
 max_parallel_agents = 3
+papers_per_agent = 3
 criteria = """
 Describe which research questions, materials, methods, or applications are relevant.
 Describe any explicit exclusions here.
@@ -62,4 +63,4 @@ review_file = "workspace/review.md"
 review_archive_dir = "workspace/reviews"
 status_file = "workspace/STATUS.md"
 download_queue_file = "workspace/download_queue.jsonl"
-review_include_excluded = false
+review_include_excluded = true

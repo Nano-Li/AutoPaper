@@ -16,6 +16,7 @@ dist/
 # Local credentials and machine-specific configuration
 config/config.local.toml
 config/*.local.toml
+# Includes config/mineru.local.toml: private MinerU token and preferences
 .env
 .env.*
 !.env.example
@@ -28,6 +29,7 @@ test_artifacts/
 *.sqlite
 *.sqlite3
 *.sqlite3-*
+*.mineru.lock
 *.db
 *.db-*
 
@@ -47,6 +49,9 @@ _references/
 
 # Local project notes that are not part of the distributable Skill
 AutoPaper_需求调研与建议方案.md
+temp_csv/
+期刊分区表/
+scripts/windows/download_approved_6.bat
 
 # Logs, temporary files, and OS/editor metadata
 *.log

@@ -1,0 +1,12 @@
+# Copy to config/mineru.local.toml (Git-ignored). Do not put secrets in this template.
+# Run from the AutoPaper project root. Existing search/screening config is unchanged.
+[mineru]
+token = ""
+output_dir = "paper_inbox/markdown"
+model = "pipeline"  # pipeline or vlm
+language = "en"
+ocr = false
+network_mode = "direct"  # direct ignores environment proxies; proxy uses proxy_url
+proxy_url = ""
+poll_seconds = 10
+timeout_seconds = 1800  # A timeout keeps the remote task for resuming.

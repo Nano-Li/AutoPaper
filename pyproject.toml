@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 autopaper = "autopaper.cli:main"
 autopaper-workflow = "autopaper.workflow:main"
+autopaper-markdown = "autopaper.mineru:main"
 
 [tool.setuptools.packages.find]
 include = ["autopaper*"]
